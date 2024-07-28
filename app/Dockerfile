@@ -1,26 +1,56 @@
+# syntax = docker/dockerfile:1
+
+# Make sure RUBY_VERSION matches the Ruby version in .ruby-version and Gemfile
+#ARG RUBY_VERSION=3.3.1
+#FROM registry.docker.com/library/ruby:$RUBY_VERSION-slim as base
+
 ARG RUBY_VERSION=3.3.1-jemalloc
-FROM quay.io/evl.ms/fullstaq-ruby:${RUBY_VERSION}-slim
+FROM quay.io/evl.ms/fullstaq-ruby:${RUBY_VERSION}-slim as base
 
-# Устанавливаем переменную окружения для рабочего каталога приложения
-ENV APP_HOME /app
+ENV APP_HOME /rails
 
-# Создаем рабочий каталог
-RUN mkdir $APP_HOME
-
-# Устанавливаем рабочую директорию для всех последующих команд
+# Rails app lives here
 WORKDIR $APP_HOME
 
-# Копируем файлы Gemfile и Gemfile.lock в рабочую директорию
+# Set production environment
+ENV RAILS_ENV="production" \
+    BUNDLE_DEPLOYMENT="1" \
+    BUNDLE_PATH="/usr/local/bundle" \
+    BUNDLE_WITHOUT="development"
+
+
+# Throw-away build stage to reduce size of final image
+FROM base as build
+
+# Install packages needed to build gems
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y build-essential git libvips pkg-config
+
+# Install application gems
 COPY Gemfile Gemfile.lock ./
+RUN bundle install && \
+    rm -rf ~/.bundle/ "${BUNDLE_PATH}"/ruby/*/cache "${BUNDLE_PATH}"/ruby/*/bundler/gems/*/.git && \
+    bundle exec bootsnap precompile --gemfile
 
-# Устанавливаем зависимости, указанные в Gemfile
-RUN bundle install
-
-# Копируем все остальные файлы приложения в рабочую директорию
+# Copy application code
 COPY . .
 
-# Открываем порт 9292 для доступа к приложению извне
-EXPOSE 9292
+# Precompile bootsnap code for faster boot times
+RUN bundle exec bootsnap precompile app/ lib/
 
-# Определяем команду для запуска приложения
-#CMD ["bundle", "exec", "rackup", "--host", "0.0.0.0"]
+# Precompiling assets for production without requiring secret RAILS_MASTER_KEY
+RUN SECRET_KEY_BASE_DUMMY=1 ./bin/rails assets:precompile
+
+
+# Final stage for app image
+FROM base
+
+# Install packages needed for deployment
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y curl libsqlite3-0 libvips && \
+    rm -rf /var/lib/apt/lists /var/cache/apt/archives
+
+# Copy built artifacts: gems, application
+COPY --from=build /usr/local/bundle /usr/local/bundle
+COPY --from=build /rails /rails
+
