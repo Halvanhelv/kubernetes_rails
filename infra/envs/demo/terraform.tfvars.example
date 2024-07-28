@@ -1,2 +1,2 @@
-# Название директории в облаке Yandex Cloud
-yc_folder_name = "<folder-name>" # пример "demo"
+# Идентификатор директории в облаке Yandex Cloud
+yc_folder_id = "<folder.id>" # пример "b1gnqna6qje1tlgnebkr"
